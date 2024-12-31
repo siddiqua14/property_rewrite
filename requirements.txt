@@ -1,3 +1,7 @@
 django
 psycopg2
 requests  # For Ollama API calls
+coverage
+pytest
+pytest-django
+pytest-cov
