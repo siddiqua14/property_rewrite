@@ -1,0 +1,53 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./ollama:/root/.ollama
+    restart: unless-stopped
+    command: serve
+    networks:
+      - ollama-network
+      - trip_scraper_default
+    mem_limit: 6g  # Set a memory limit for the Ollama container
+
+  ollamadb:
+    image: postgres:14
+    container_name: ollama-db
+    environment:
+      POSTGRES_USER: username
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: ollama_data
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - ollama-network
+
+  django:
+    build: .
+    container_name: django
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app  # This will map your current directory to /app in the container
+    environment:
+      - OLLAMA_DB_URL=postgresql://username:password@ollama-db/ollama_data
+      - TRIP_DB_URL=postgresql://scraper_user:scraper_password@scraper_db:5432/scraper_db
+    depends_on:
+      - ollama
+      - ollamadb
+    networks:
+      - ollama-network
+      - trip_scraper_default
+    command: ["sh", "-c", "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"]
+
+networks:
+  ollama-network:
+    driver: bridge
+  trip_scraper_default:
+    external: true
+
+volumes:
+  postgres_data:
