@@ -5,6 +5,9 @@ from unittest.mock import patch, MagicMock
 from django.core.management import call_command
 from io import StringIO
 from properties.models import Property, PropertySummary, PropertyRatingReview, Hotel
+import requests
+import json
+
 
 class RewriteHotelsCommandTest(TransactionTestCase):
     databases = {'default', 'trip'}
@@ -32,18 +35,136 @@ class RewriteHotelsCommandTest(TransactionTestCase):
                 INSERT INTO hotels (
                     hotel_id, "hotelName", city_id, city_name, 
                     "positionName", price, "roomType", latitude, longitude
-                ) VALUES (
-                    1, 'Original Hotel Name', 1, 'Test City', 
-                    'Downtown', 199.99, 'Deluxe', 40.7128, -74.0060
-                )
+                ) VALUES 
+                (1, 'Original Hotel Name', 1, 'Test City', 'Downtown', 199.99, 'Deluxe', 40.7128, -74.0060),
+                (2, 'Second Hotel', 2, 'Another City', 'Beachfront', 299.99, 'Suite', 25.7617, -80.1918)
             """)
 
-        # Create initial property
+        # Create initial properties
         Property.objects.create(
             original_id=1,
             rewritten_title='Original Title',
             description='Original Description'
         )
+        Property.objects.create(
+            original_id=2,
+            rewritten_title='Second Title',
+            description='Second Description'
+        )
+
+
+    @patch('requests.post')
+    def test_http_error_handling(self, mock_post):
+        """Test handling of HTTP errors in generate_description"""
+        # Mock HTTP error response
+        mock_post.return_value = MagicMock(
+            status_code=500,
+            text="Internal Server Error"
+        )
+
+        # Run command
+        out = StringIO()
+        call_command('rewrite_hotels', stdout=out)
+
+        # Verify error handling
+        self.assertIn("Ollama API error: Internal Server Error", out.getvalue())
+        
+        # Verify no updates were made
+        property = Property.objects.get(original_id=1)
+        self.assertEqual(property.rewritten_title, 'Original Title')
+        self.assertEqual(property.description, 'Original Description')
+
+    @patch('requests.post')
+    def test_missing_response_field(self, mock_post):
+        """Test handling of missing 'response' field in API response"""
+        # Mock response without 'response' field
+        mock_post.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {'other_field': 'some value'}
+        )
+
+        # Run command
+        out = StringIO()
+        call_command('rewrite_hotels', stdout=out)
+
+        # Verify property wasn't updated
+        property = Property.objects.get(original_id=1)
+        self.assertEqual(property.description, 'Original Description')
+
+    @patch('requests.post')
+    def test_request_exception(self, mock_post):
+        """Test handling of request exceptions"""
+        # Mock request exception
+        mock_post.side_effect = requests.exceptions.RequestException("Connection error")
+
+        # Run command
+        out = StringIO()
+        call_command('rewrite_hotels', stdout=out)
+
+        # Verify error handling - looking for both title and description error messages
+        output = out.getvalue()
+        self.assertIn("Error generating title: Connection error", output)
+        
+        # Verify no updates were made
+        property = Property.objects.get(original_id=1)
+        self.assertEqual(property.rewritten_title, 'Original Title')
+        self.assertEqual(property.description, 'Original Description')
+
+        # Verify the command continues processing but skips problematic records
+        self.assertIn("Skipping ID 1 due to invalid rewritten title", output)
+
+
+    @patch('requests.post')
+    def test_optional_parameters_handling(self, mock_post):
+        """Test handling of optional parameters in description generation"""
+        # Create test data with all optional parameters
+        with connections['trip'].cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO hotels (
+                    hotel_id, "hotelName", city_id, city_name, 
+                    "positionName", price, "roomType", latitude, longitude
+                ) VALUES (
+                    3, 'Full Params Hotel', 3, 'Test City 3', 
+                    'Resort Area', 399.99, 'Presidential Suite', 34.0522, -118.2437
+                )
+            """)
+
+        Property.objects.create(
+            original_id=3,
+            rewritten_title='Full Params Title',
+            description='Original Description 3'
+        )
+
+        # Mock both title and description API calls
+        def mock_api_response(*args, **kwargs):
+            if 'system' in kwargs['json'] and 'title expert' in kwargs['json']['system']:
+                return MagicMock(
+                    status_code=200,
+                    json=lambda: {'response': 'New Rewritten Title'}
+                )
+            else:
+                return MagicMock(
+                    status_code=200,
+                    json=lambda: {'response': 'Description with all parameters included'}
+                )
+
+        mock_post.side_effect = mock_api_response
+
+        # Run command
+        out = StringIO()
+        call_command('rewrite_hotels', stdout=out)
+
+        # Verify description was generated with all parameters
+        property = Property.objects.get(original_id=3)
+        self.assertEqual(property.rewritten_title, 'New Rewritten Title')
+        self.assertEqual(property.description, 'Description with all parameters included')
+
+        # Verify the API was called with the correct parameters
+        api_calls = mock_post.call_args_list
+        self.assertTrue(len(api_calls) >= 2)  # At least one call for title and one for description
+        
+        # Verify the output indicates success
+        self.assertNotIn("Skipping", out.getvalue())
 
     def tearDown(self):
         Property.objects.all().delete()
@@ -307,7 +428,6 @@ class GeneratePropertyContentCommandTest(TestCase):
         )
         self.assertEqual(str(review), "Rating and Review for Property 1")
 
-
 class PropertyModelTest(TestCase):
     
     def setUp(self):
@@ -403,3 +523,183 @@ class HotelModelTest(TestCase):
         mock_using_trip_db.return_value = True  # Simulate a successful DB call
         hotels = Hotel.using_trip_db().all()
         self.assertTrue(hotels) 
+
+class TestGeneratePropertyCommand(TestCase):
+    def setUp(self):
+        # Test data
+        self.test_properties = [
+            (1, "Hotel Sunshine", 101, "New York", "Central Park", 200, "Deluxe Room", 40.7128, -74.0060),
+            (2, "Ocean Breeze Resort", 102, "Miami", "South Beach", 300, "Suite", 25.7617, -80.1918),
+        ]
+        
+        # Success response for summary
+        self.success_summary_response = {
+            "response": "A beautiful hotel near Central Park with stunning views."
+        }
+        
+        # Success response for rating/review
+        self.success_rating_response = {
+            "response": "4.5/5 stars Exceptional luxury hotel with outstanding service."
+        }
+
+    def mock_success_response(self, *args, **kwargs):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = (
+            self.success_summary_response if "summary expert" in kwargs['json']['system']
+            else self.success_rating_response
+        )
+        return mock_response
+
+    def mock_http_error_response(self, *args, **kwargs):
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+        return mock_response
+
+    def mock_json_decode_error_response(self, *args, **kwargs):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.side_effect = json.JSONDecodeError("Invalid JSON", "", 0)
+        return mock_response
+
+    def mock_missing_response_field(self, *args, **kwargs):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"invalid_field": "some value"}
+        return mock_response
+
+    def mock_request_exception(self, *args, **kwargs):
+        raise requests.exceptions.RequestException("Connection error")
+
+    @patch("properties.management.commands.generate_property_info.connections")
+    @patch("properties.management.commands.generate_property_info.requests.post")
+    def test_successful_generation(self, mock_post, mock_connections):
+        # Mock database cursor
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall.return_value = self.test_properties
+        mock_connections["trip"].cursor.return_value.__enter__.return_value = mock_cursor
+        
+        # Mock successful API responses
+        mock_post.side_effect = self.mock_success_response
+
+        # Execute command
+        out = StringIO()
+        call_command("generate_property_info", stdout=out)
+
+        # Verify database entries
+        self.assertEqual(PropertySummary.objects.count(), 2)
+        self.assertEqual(PropertyRatingReview.objects.count(), 2)
+
+        # Check content of entries
+        summary1 = PropertySummary.objects.get(property_id=1)
+        self.assertEqual(summary1.summary, "A beautiful hotel near Central Park with stunning views.")
+
+        rating1 = PropertyRatingReview.objects.get(property_id=1)
+        self.assertEqual(rating1.rating, 4.5)
+
+    @patch("properties.management.commands.generate_property_info.connections")
+    @patch("properties.management.commands.generate_property_info.requests.post")
+    def test_http_error_handling(self, mock_post, mock_connections):
+        # Mock database cursor
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall.return_value = self.test_properties[:1]
+        mock_connections["trip"].cursor.return_value.__enter__.return_value = mock_cursor
+
+        # Mock HTTP error
+        mock_post.side_effect = self.mock_http_error_response
+
+        # Execute command
+        out = StringIO()
+        call_command("generate_property_info", stdout=out)
+
+        # Verify error handling
+        self.assertIn("Ollama API error: Internal Server Error", out.getvalue())
+        self.assertEqual(PropertySummary.objects.count(), 0)
+        self.assertEqual(PropertyRatingReview.objects.count(), 0)
+
+    @patch("properties.management.commands.generate_property_info.connections")
+    @patch("properties.management.commands.generate_property_info.requests.post")
+    def test_json_decode_error(self, mock_post, mock_connections):
+        # Mock database cursor
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall.return_value = self.test_properties[:1]
+        mock_connections["trip"].cursor.return_value.__enter__.return_value = mock_cursor
+
+        # Mock JSON decode error
+        mock_post.side_effect = self.mock_json_decode_error_response
+
+        # Execute command
+        out = StringIO()
+        call_command("generate_property_info", stdout=out)
+
+        # Verify error handling
+        self.assertIn("JSON decode error", out.getvalue())
+        self.assertEqual(PropertySummary.objects.count(), 0)
+
+    @patch("properties.management.commands.generate_property_info.connections")
+    @patch("properties.management.commands.generate_property_info.requests.post")
+    def test_missing_response_field(self, mock_post, mock_connections):
+        # Mock database cursor
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall.return_value = self.test_properties[:1]
+        mock_connections["trip"].cursor.return_value.__enter__.return_value = mock_cursor
+
+        # Mock missing response field
+        mock_post.side_effect = self.mock_missing_response_field
+
+        # Execute command
+        out = StringIO()
+        call_command("generate_property_info", stdout=out)
+
+        # Verify error handling
+        self.assertIn("No 'response' field in API response", out.getvalue())
+        self.assertEqual(PropertySummary.objects.count(), 0)
+
+    @patch("properties.management.commands.generate_property_info.connections")
+    @patch("properties.management.commands.generate_property_info.requests.post")
+    def test_request_exception(self, mock_post, mock_connections):
+        # Mock database cursor
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall.return_value = self.test_properties[:1]
+        mock_connections["trip"].cursor.return_value.__enter__.return_value = mock_cursor
+
+        # Mock request exception
+        mock_post.side_effect = self.mock_request_exception
+
+        # Execute command
+        out = StringIO()
+        call_command("generate_property_info", stdout=out)
+
+        # Verify error handling
+        self.assertIn("Request error: Connection error", out.getvalue())
+        self.assertEqual(PropertySummary.objects.count(), 0)
+
+    @patch("properties.management.commands.generate_property_info.connections")
+    @patch("properties.management.commands.generate_property_info.requests.post")
+    def test_invalid_rating_format(self, mock_post, mock_connections):
+        # Mock database cursor
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall.return_value = self.test_properties[:1]
+        mock_connections["trip"].cursor.return_value.__enter__.return_value = mock_cursor
+
+        # Add invalid rating format response
+        def mock_invalid_rating_response(*args, **kwargs):
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {
+                "response": "Invalid stars Great hotel with excellent service"
+            }
+            return mock_response
+
+        mock_post.side_effect = mock_invalid_rating_response
+
+        # Execute command
+        out = StringIO()
+        call_command("generate_property_info", stdout=out)
+
+        # Verify error handling
+        self.assertIn("Invalid rating format:", out.getvalue())
+        self.assertEqual(PropertySummary.objects.count(), 0)
+        self.assertEqual(PropertyRatingReview.objects.count(), 0)
+
