@@ -1,2 +1,4 @@
 ollama/
 .pub
+htmlcov/
+.coverage 

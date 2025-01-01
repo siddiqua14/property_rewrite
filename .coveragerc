@@ -1,0 +1,22 @@
+[run]
+  # Measure branch coverage
+source =
+    properties  # Specify the folder to measure coverage in
+
+[report]
+show_missing = True  # Show lines that are missing coverage
+skip_covered = True  # Skip fully covered files in the report
+exclude_lines =
+    pragma: no cover  # Exclude lines marked with "pragma: no cover"
+
+[coverage:run]
+
+[coverage:report]
+# Adjust these according to your preferences
+skip_covered = True
+show_missing = True
+omit =
+    */migrations/*
+    */asgi.py
+    */wsgi.py
+    */urls.py
