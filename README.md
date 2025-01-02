@@ -91,6 +91,7 @@ Automates rewriting property titles and descriptions using the Ollama LLM.
 Command:
 ```bash
 docker exec -it django python manage.py rewrite_hotels
+docker exec -it django python manage.py rewrite_property_info # for seperate table with rewritten property titles and descriptions
 ```
 ### Command 2: Generate Property Summaries, Ratings and Reviews
 Generates concise summaries for properties and stores them in a new table. Creates AI-powered ratings and reviews for properties.
