@@ -103,6 +103,7 @@ docker exec -it django python manage.py rewrite_property_info
 ## Testing
 ### Run Unit Tests with Coverage:
 ```bash
+docker-compose exec django bash
 coverage run manage.py test
 coverage report
 ```
