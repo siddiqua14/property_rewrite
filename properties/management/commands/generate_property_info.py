@@ -7,7 +7,7 @@ from django.db import connections
 
 class Command(BaseCommand):
     help = 'Generate summary, rating, and review for each property using Ollama model'
-
+    
     def handle(self, *args, **kwargs):
         # Fetch property data from the scraper database (PostgreSQL)
         with connections['trip'].cursor() as cursor:

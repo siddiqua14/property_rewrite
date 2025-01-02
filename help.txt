@@ -52,3 +52,35 @@ pip install pytest pytest-django
 pip install coverage
 coverage run manage.py test
 coverage run --source=properties manage.py test properties.tests
+
+
+
+
+
+
+
+
+
+
+
+extra code 
+    /*
+class Property(models.Model):
+    original_id = models.BigIntegerField(default=0)  # Default for existing rows
+    original_title = models.TextField(default="Unknown")  # Default for existing rows
+    rewritten_title = models.TextField(default="Not rewritten")  # Default for existing rows
+    description = models.TextField(default="Not rewritten")  # New field for the description
+    class Meta:
+        db_table = 'rewrite_property_info'
+
+    def __str__(self):
+        return f"{self.original_title} -> {self.rewritten_title}"
+   
+   
+   admin code: 
+   # Register Property model
+@admin.register(Property)
+class PropertyAdmin(admin.ModelAdmin):
+    list_display = ('original_id', 'original_title', 'rewritten_title', 'description')  # Fields to display
+    search_fields = ('original_id', 'original_title', 'rewritten_title')  # Searchable fields
+    list_filter = ('rewritten_title',)  # Filter by rewritten title

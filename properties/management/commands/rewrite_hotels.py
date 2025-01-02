@@ -10,9 +10,7 @@ class Command(BaseCommand):
     def handle(self, *args, **kwargs):
         # Ensure 'description' column exists in the 'hotels' table
         self.ensure_description_column()
-
-        # Fetch property data from the scraper database (PostgreSQL)
-        with connections['trip'].cursor() as cursor:
+        with connections['trip'].cursor() as cursor: # Fetch property data from the scraper database (PostgreSQL)
             cursor.execute('SELECT hotel_id, "hotelName", city_id, city_name, "positionName", price, "roomType", latitude, longitude FROM hotels')
             properties = cursor.fetchall()
             properties = properties[:2]  # Limit to 5 properties for testing (can adjust as needed)
