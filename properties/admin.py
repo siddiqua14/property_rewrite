@@ -1,6 +1,12 @@
 from django.contrib import admin
 from .models import Property, PropertySummary, PropertyRatingReview, Hotel
 
+# Register Property model
+@admin.register(Property)
+class PropertyAdmin(admin.ModelAdmin):
+    list_display = ('original_id', 'original_title', 'rewritten_title', 'description')  # Fields to display
+    search_fields = ('original_id', 'original_title', 'rewritten_title')  # Searchable fields
+    list_filter = ('rewritten_title',)  # Filter by rewritten title
 
 # Register PropertySummary model
 @admin.register(PropertySummary)
