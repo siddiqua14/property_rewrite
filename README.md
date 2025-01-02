@@ -1,4 +1,4 @@
-# Django-CLI Application will LLM Model for Property Information Rewriting
+# Django-CLI Application with LLM Model for Property Information Rewriting
 
 This project connects a new Django project to a separate Scrapy project for accessing the Scrapy database, which is stored in a PostgreSQL container. The Django project leverages the Ollama model to rewrite property titles and store the updated information back into the property table.
 
