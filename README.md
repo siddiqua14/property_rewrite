@@ -58,9 +58,7 @@ Ensure Docker Desktop is running. Then, execute the following commands:
 docker-compose up --build
 ```
 - For stopping  the Application(if need):
-`Ctrl + C`
-# or
-`docker-compose down`
+`Ctrl + C` or `docker-compose down`
 
 ## Ollama Model
 
